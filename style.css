@@ -1,0 +1,189 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Daal Tech — مهندس الأوامر الذكي
+   ملف الأنماط CSS - التحديث النهائي (RTL + Clean)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Montserrat:wght@600;700&display=swap');
+
+:root {
+  --bg-white:       #FFFFFF;
+  --bg-sidebar:     #F8F9FA;
+  --bg-user-msg:    #F0F4F9;
+  --brand-blue:     #0F4C81;
+  --brand-cyan:     #00C8FF;
+  --text-main:      #202124;
+  --text-muted:     #5F6368;
+  --border-light:   #E8EAED;
+}
+
+/* ── فرض المحاذاة من اليمين لليسار (RTL) بقوة على جميع المكونات ── */
+html, body, [class*="st-"], .stApp, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContainer"] {
+  direction: rtl !important;
+  text-align: right !important;
+  font-family: 'IBM Plex Sans Arabic', 'Inter', sans-serif !important;
+  color: var(--text-main) !important;
+}
+
+/* التدرج اللوني والخلفية المضيئة */
+.stApp {
+  background-color: var(--bg-white) !important;
+  background-image: radial-gradient(circle at 50% 40%, rgba(200, 230, 255, 0.45) 0%, rgba(255, 255, 255, 0) 65%) !important;
+  background-attachment: fixed !important;
+}
+
+/* ── إخفاء الكلمة الإنجليزية (double_arrow) وعناصر Streamlit الافتراضية ── */
+[data-testid="stSidebarCollapseButton"], #MainMenu, header, footer, .stDeployButton {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* ── الشريط الجانبي ── */
+[data-testid="stSidebar"] {
+  background-color: var(--bg-sidebar) !important;
+  border-left: 1px solid var(--border-light) !important;
+}
+[data-testid="stSidebar"] p, [data-testid="stSidebar"] span {
+    color: var(--text-muted) !important;
+}
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+    color: var(--brand-blue) !important;
+}
+
+/* ── الأزرار ── */
+.stButton > button {
+  background-color: var(--bg-white) !important;
+  color: var(--brand-blue) !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 24px !important;
+  font-weight: 500 !important;
+  padding: 0.5rem 1.2rem !important;
+}
+.stButton > button:hover {
+  background-color: var(--bg-user-msg) !important;
+  border-color: var(--brand-blue) !important;
+}
+
+/* ── مربع الإدخال (Chat Input) ومربع إرفاق الملفات ── */
+div[data-testid="stChatInput"] {
+  padding-bottom: 30px;
+}
+div[data-testid="stChatInput"] textarea {
+  background-color: var(--bg-white) !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 30px !important;
+  color: var(--text-main) !important;
+  padding: 16px 24px !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08) !important;
+  direction: rtl !important;
+  text-align: right !important;
+}
+div[data-testid="stChatInput"] textarea:focus {
+  border-color: var(--brand-cyan) !important;
+  box-shadow: 0 4px 18px rgba(0, 200, 255, 0.15) !important;
+}
+[data-testid="stChatInputSubmitButton"] {
+  color: var(--brand-blue) !important;
+}
+
+/* ── فقاعات المحادثة ── */
+[data-testid="stChatMessage"] {
+  background-color: transparent !important;
+  border: none !important;
+  padding: 16px 20px !important;
+  margin-bottom: 8px !important;
+  direction: rtl !important;
+  text-align: right !important;
+}
+[data-testid="stChatMessage"][data-baseweb="box"]:nth-child(odd) {
+  background-color: var(--bg-user-msg) !important;
+  border-radius: 20px 20px 4px 20px !important;
+  max-width: 85%;
+  margin-right: auto;
+}
+
+/* ── الكود البرمجي (Code Blocks) ── */
+code {
+  font-family: 'Inter', monospace !important;
+  background-color: #F1F3F4 !important;
+  color: #D93025 !important;
+  border-radius: 4px;
+  padding: 2px 6px;
+  direction: ltr !important;
+  text-align: left !important;
+  display: inline-block;
+}
+pre {
+  background-color: #F8F9FA !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 12px !important;
+  direction: ltr !important;
+  text-align: left !important;
+  padding: 16px !important;
+}
+pre code {
+  background-color: transparent !important;
+  color: #202124 !important;
+}
+
+/* ── التمددات (Expanders) ── */
+[data-testid="stExpander"] {
+  background-color: var(--bg-white) !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 12px !important;
+}
+/* ── إعطاء مساحة داخل مربع النص للأيقونة الجديدة ── */
+div[data-testid="stChatInput"] textarea {
+  padding-left: 110px !important; /* مساحة لزر الإرسال وزر المرفقات معاً */
+}
+
+/* ── تحويل زر الـ Popover إلى أيقونة عائمة بجوار زر الإرسال ── */
+div[data-testid="stPopover"] {
+    position: fixed !important;
+    bottom: 46px !important;
+    left: 70px !important; /* موضع الأيقونة بجوار زر الإرسال مباشرة */
+    z-index: 99999 !important;
+}
+
+div[data-testid="stPopover"] > button {
+    background-color: transparent !important;
+    border: none !important;
+    color: var(--text-muted) !important;
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 50% !important;
+    font-size: 1.2rem !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transition: all 0.2s ease !important;
+}
+
+div[data-testid="stPopover"] > button:hover {
+    color: var(--brand-blue) !important;
+    background-color: var(--bg-user-msg) !important;
+}
+/* ── تحسين زر المرفقات والتمددات لمنع تداخل النصوص ── */
+[data-testid="stExpander"] {
+  background-color: var(--bg-sidebar) !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 12px !important;
+  margin-bottom: 20px !important; /* مسافة واضحة بينه وبين مربع الإدخال */
+  width: 100% !important; /* يأخذ العرض كاملاً لمنع التداخل */
+}
+
+[data-testid="stExpander"] summary {
+  padding: 12px 20px !important;
+}
+
+[data-testid="stExpander"] summary p {
+  color: var(--brand-blue) !important;
+  font-weight: 600 !important;
+  margin: 0 !important;
+  font-size: 1rem !important; /* حجم خط مناسب للقراءة */
+}
+
+/* إخفاء سهم الطي الافتراضي لجعله يبدو كزر حديث */
+[data-testid="stExpander"] summary svg {
+  display: none !important;
+}
