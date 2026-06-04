@@ -2,6 +2,13 @@ import streamlit as st
 import google.generativeai as genai
 import base64
 import pathlib
+import re
+import html
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import streamlit.components.v1 as _components
+from sidebar_toggle_template import inject_sidebar_toggle
 
 # 1. إعداد الصفحة
 st.set_page_config(
@@ -21,6 +28,37 @@ def load_css(file_path):
 
 load_css("style.css")
 
+# ── تطبيق قالب الشريط الجانبي المنزلق (Sidebar Drawer Toggle) ──
+# btn_bg=None و btn_color=None لإبقاء لون زر الطي دون تغيير (تنسيق الشكل فقط)
+inject_sidebar_toggle(btn_bg=None, btn_color=None)
+
+# ── تنسيقات إضافية للجوال (غير متعلقة بالشريط الجانبي) ──
+st.markdown(
+    """
+    <style>
+    @media screen and (max-width: 768px) {
+        [data-testid="block-container"] { padding: 0.8rem !important; }
+
+        div[data-testid="stExpander"] [data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+        }
+        div[data-testid="stExpander"] [data-testid="stColumn"] {
+            flex: 1 1 85px !important;
+            min-width: 85px !important;
+            max-width: 100% !important;
+        }
+        div[data-testid="stExpander"] .stButton > button {
+            font-size: 13px !important;
+            padding: 8px 6px !important;
+            min-height: 36px !important;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # 3. دوال مساعدة (شعار دال التقنية) - تم التعديل للاسم الدقيق للملف
 def get_base64_of_bin_file(bin_file):
     try:
@@ -32,6 +70,121 @@ def get_base64_of_bin_file(bin_file):
 
 # استخدمنا الاسم المطابق تماماً للملف المرفق
 logo_base64 = get_base64_of_bin_file("شعار دال التقنية.png")
+
+# ==========================================
+# 3.1 دالة إرسال البرومبت عبر البريد
+# ==========================================
+def is_valid_email(addr: str) -> bool:
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", (addr or "").strip()))
+
+def send_prompt_email(to_email: str, prompt_text: str):
+    """يرسل البرومبت (بالإنجليزية والعربية كما هو في رد المساعد) عبر Gmail SMTP.
+    يعيد (نجاح: bool، رسالة: str)."""
+    sender = st.secrets.get("EMAIL_SENDER")
+    password = st.secrets.get("EMAIL_PASSWORD")
+    if not sender or not password:
+        return False, "لم يتم ضبط بيانات البريد (EMAIL_SENDER / EMAIL_PASSWORD) في secrets."
+
+    safe = html.escape(prompt_text or "")
+    body = f"""
+    <div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;max-width:640px;margin:auto;padding:24px;border:1px solid #e6e6e6;border-radius:12px;background:#ffffff;">
+        <h2 style="color:#0F4C81;text-align:center;margin:0 0 6px;">دال التقنية | مهندس الأوامر الذكي</h2>
+        <p style="color:#5F6368;text-align:center;margin:0 0 18px;font-size:14px;">البرومبت الاحترافي (بالإنجليزية والعربية)</p>
+        <div style="background:#f5f7fa;border:1px solid #e0e4ea;border-radius:10px;padding:16px;">
+            <pre style="white-space:pre-wrap;word-wrap:break-word;font-family:Consolas,Menlo,monospace;font-size:13px;line-height:1.7;margin:0;text-align:left;direction:ltr;">{safe}</pre>
+        </div>
+        <p style="color:#9aa0a6;font-size:12px;text-align:center;margin-top:18px;">رسالة مُرسلة عبر تطبيق دال التقنية.</p>
+    </div>
+    """
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"] = sender
+        msg["To"] = to_email
+        msg["Subject"] = "البرومبت الاحترافي | دال التقنية"
+        msg.attach(MIMEText(body, "html", "utf-8"))
+
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(sender, password)
+        server.sendmail(sender, to_email, msg.as_string())
+        server.quit()
+        return True, "تم إرسال البرومبت بنجاح."
+    except Exception as e:
+        return False, f"تعذّر الإرسال. التفاصيل: {e}"
+
+# سكربت الإكمال التلقائي للبريد (يظهر فور كتابة @) — يُحقَن على حقل Streamlit الأصلي
+_EMAIL_AUTOCOMPLETE_JS = """
+<script>
+(function(){
+  const DOMAINS = ["gmail.com","hotmail.com","outlook.com","yahoo.com","icloud.com","live.com"];
+  const doc = window.parent.document;
+  function findInput(){
+    return doc.querySelector('input[aria-label*="البريد"]') ||
+           doc.querySelector('input[placeholder="name@example.com"]');
+  }
+  function setup(){
+    const input = findInput();
+    if(!input){ setTimeout(setup, 250); return; }
+    if(input.dataset.acAttached === "1"){ return; }
+    input.dataset.acAttached = "1";
+    input.setAttribute("autocomplete","off");
+    let dl = doc.getElementById("email_ac_list");
+    if(!dl){ dl = doc.createElement("datalist"); dl.id = "email_ac_list"; doc.body.appendChild(dl); }
+    input.setAttribute("list","email_ac_list");
+    function refresh(){
+      const v = input.value || "";
+      dl.innerHTML = "";
+      const at = v.indexOf("@");
+      if(at === -1){ return; }
+      const local = v.slice(0, at);
+      const frag = v.slice(at+1).toLowerCase();
+      DOMAINS.filter(function(d){ return d.indexOf(frag) === 0; })
+             .forEach(function(d){
+                const opt = doc.createElement("option");
+                opt.value = local + "@" + d;
+                dl.appendChild(opt);
+             });
+    }
+    input.addEventListener("input", refresh);
+    refresh();
+  }
+  setup();
+})();
+</script>
+"""
+
+# ==========================================
+# 3.2 نافذة الإرسال عبر البريد (Modal Dialog)
+# ==========================================
+@st.dialog("✉ إرسال البرومبت عبر الإيميل")
+def email_dialog(prompt_text: str):
+    st.markdown(
+        "<p style='color:#5F6368;font-size:0.92rem;'>أدخل بريد المستلم. بمجرد كتابة "
+        "<b>@</b> ستظهر اقتراحات النطاقات تلقائياً.</p>",
+        unsafe_allow_html=True
+    )
+    email = st.text_input("البريد الإلكتروني للمستلم", key="recipient_email",
+                          placeholder="name@example.com")
+    # حقن سكربت الإكمال التلقائي على الحقل أعلاه
+    _components.html(_EMAIL_AUTOCOMPLETE_JS, height=0)
+
+    c_send, c_cancel = st.columns(2)
+    with c_send:
+        if st.button("✦ إرسال", key="do_send_email", use_container_width=True, type="primary"):
+            if not is_valid_email(email):
+                st.error("يرجى إدخال بريد إلكتروني صحيح.")
+            else:
+                ok, msg = send_prompt_email(email.strip(), prompt_text)
+                if ok:
+                    st.session_state.open_email = False
+                    st.session_state.email_feedback = ("success", msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+    with c_cancel:
+        if st.button("إلغاء", key="cancel_email", use_container_width=True):
+            st.session_state.open_email = False
+            st.rerun()
 
 # 4. الترويسة الرئيسية (Header)
 if logo_base64:
@@ -127,28 +280,41 @@ if "last_response" not in st.session_state:
 if "last_prompt" not in st.session_state:
     st.session_state.last_prompt = ""
 
+# إشعار نتيجة الإرسال (يُعرض بعد إغلاق النافذة)
+_fb = st.session_state.pop("email_feedback", None)
+if _fb:
+    if _fb[0] == "success":
+        st.toast(_fb[1], icon="✅")
+    else:
+        st.toast(_fb[1], icon="⚠️")
+
 # 8. واجهة المحادثة
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# ── زر الحفظ (تمت إزالة الأعمدة لمنع انضغاط النص) ──
+# ── أزرار الإجراءات: حفظ في المكتبة + إرسال عبر الإيميل (جنباً إلى جنب) ──
 if st.session_state.last_response:
-    if st.button("✦ حفظ الأمر الأخير في المكتبة", key="save_current_prompt"):
-        st.session_state.saved_prompts.append({
-            "title": st.session_state.last_prompt[:40] + "..." if len(st.session_state.last_prompt) > 40 else st.session_state.last_prompt,
-            "prompt": st.session_state.last_response
-        })
-        st.session_state.last_response = None 
-        st.rerun()
+    col_save, col_email = st.columns(2)
+
+    with col_save:
+        if st.button("✦ حفظ الأمر الأخير في المكتبة", key="save_current_prompt", use_container_width=True):
+            st.session_state.saved_prompts.append({
+                "title": st.session_state.last_prompt[:40] + "..." if len(st.session_state.last_prompt) > 40 else st.session_state.last_prompt,
+                "prompt": st.session_state.last_response
+            })
+            st.session_state.last_response = None
+            st.rerun()
+
+    with col_email:
+        if st.button("✉ إرسال عبر الإيميل", key="open_email_dialog", use_container_width=True):
+            st.session_state.open_email = True
+
+    # فتح النافذة المنبثقة عند الطلب (تبقى مفتوحة عبر إعادات التشغيل الداخلية)
+    if st.session_state.get("open_email"):
+        email_dialog(st.session_state.last_response)
 
 st.markdown("<br>", unsafe_allow_html=True) # مسافة جمالية بسيطة
-
-# ── زر المرفقات (تمت إزالة الأعمدة وإعادته لوضعه الطبيعي المريح) ──
-with st.expander("📎 إرفاق ملف أو مستند لدعم الأمر (اختياري)", expanded=False):
-    uploaded_file = st.file_uploader("", type=["txt", "pdf", "docx"], label_visibility="collapsed")
-    if uploaded_file:
-        st.success(f"تم إرفاق الملف: {uploaded_file.name} بنجاح!")
 
 # ── مربع الإدخال الرئيسي ──
 if user_prompt := st.chat_input("اكتب فكرتك هنا (مثال: أريد بناء نظام ذكاء اصطناعي للموارد البشرية)..."):
@@ -156,8 +322,6 @@ if user_prompt := st.chat_input("اكتب فكرتك هنا (مثال: أريد 
     st.session_state.last_prompt = user_prompt
     
     final_prompt = user_prompt
-    if 'uploaded_file' in locals() and uploaded_file is not None:
-        final_prompt += f"\n\n[ملاحظة: قام المستخدم بإرفاق ملف باسم {uploaded_file.name}]"
         
     st.chat_message("user").markdown(user_prompt)
     st.session_state.messages.append({"role": "user", "content": user_prompt})
