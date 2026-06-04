@@ -4,6 +4,7 @@ import base64
 import pathlib
 import re
 import html
+import requests
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -58,6 +59,102 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+# ==========================================
+# 2.1 الاتصال بقاعدة بيانات Supabase
+#   - SUPABASE_KEY: استخدم المفتاح السرّي (service_role القديم أو sb_secret_) من جهة الخادم.
+#   - يعمل عبر REST بنفس نمط الترويسات (apikey + Authorization).
+# ==========================================
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
+SB_READY = bool(SUPABASE_URL and SUPABASE_KEY)
+SB_HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+}
+
+# ---- عدّاد الزوار (جدول page_stats) ----
+def read_visitor_count() -> int:
+    if not SB_READY:
+        return 0
+    try:
+        r = requests.get(
+            f"{SUPABASE_URL}/rest/v1/page_stats",
+            headers=SB_HEADERS,
+            params={"id": "eq.visitors", "select": "count"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json()
+        return int(data[0]["count"]) if data else 0
+    except Exception:
+        return 0
+
+def bump_visitor_count() -> int:
+    if not SB_READY:
+        return 0
+    try:
+        r = requests.post(
+            f"{SUPABASE_URL}/rest/v1/rpc/increment_visitors",
+            headers=SB_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        return int(r.json())
+    except Exception:
+        return read_visitor_count()
+
+# ---- الأوامر المحفوظة (جدول saved_prompts) ----
+def fetch_saved_prompts() -> list:
+    if not SB_READY:
+        return []
+    try:
+        r = requests.get(
+            f"{SUPABASE_URL}/rest/v1/saved_prompts",
+            headers=SB_HEADERS,
+            params={"select": "*", "order": "created_at.desc"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return []
+
+def insert_saved_prompt(title: str, prompt: str) -> bool:
+    if not SB_READY:
+        return False
+    try:
+        r = requests.post(
+            f"{SUPABASE_URL}/rest/v1/saved_prompts",
+            headers=SB_HEADERS,
+            json={"title": title, "prompt": prompt},
+            timeout=10,
+        )
+        r.raise_for_status()
+        return True
+    except Exception:
+        return False
+
+def delete_saved_prompt(prompt_id) -> bool:
+    if not SB_READY:
+        return False
+    try:
+        r = requests.delete(
+            f"{SUPABASE_URL}/rest/v1/saved_prompts",
+            headers=SB_HEADERS,
+            params={"id": f"eq.{prompt_id}"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        return True
+    except Exception:
+        return False
+
+# يُحتسب الزائر مرة واحدة لكل جلسة (لا يتأثر بإعادات التشغيل الداخلية)
+if "visit_counted" not in st.session_state:
+    st.session_state.visit_counted = True
+    bump_visitor_count()
 
 # 3. دوال مساعدة (شعار دال التقنية) - تم التعديل للاسم الدقيق للملف
 def get_base64_of_bin_file(bin_file):
@@ -116,7 +213,7 @@ def send_prompt_email(to_email: str, prompt_text: str):
 _EMAIL_AUTOCOMPLETE_JS = """
 <script>
 (function(){
-  const DOMAINS = ["gmail.com","hotmail.com","outlook.com","yahoo.com","icloud.com","live.com"];
+  const DOMAINS = ["gmail.com","hotmail.com","outlook.com","yahoo.com","icloud.com","live.com","moe.gov.sa"];
   const doc = window.parent.document;
   function findInput(){
     return doc.querySelector('input[aria-label*="البريد"]') ||
@@ -215,9 +312,6 @@ if "chat_session" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "saved_prompts" not in st.session_state:
-    st.session_state.saved_prompts = []
-
 # 6. الشريط الجانبي (Sidebar)
 with st.sidebar:
     st.markdown("<h2 style='color: #0F4C81;'>⛭ الإعدادات والمكتبة</h2>", unsafe_allow_html=True)
@@ -231,14 +325,22 @@ with st.sidebar:
     st.markdown("---")
     
     st.markdown("### ◫ مكتبة الأوامر المحفوظة")
-    if not st.session_state.saved_prompts:
+    _saved = fetch_saved_prompts()
+    if not _saved:
         st.markdown("<p style='color: #8b949e; font-size: 0.9em;'>لا توجد أوامر محفوظة حالياً.</p>", unsafe_allow_html=True)
     else:
-        for idx, saved_item in enumerate(reversed(st.session_state.saved_prompts)):
-            with st.expander(f"⎔ {saved_item['title']}", expanded=False):
-                st.markdown(f"""**الأمر بالإنجليزية:**\n```text\n{saved_item['prompt']}\n
+        for saved_item in _saved:
+            _title = saved_item.get("title", "بدون عنوان")
+            with st.expander(f"⎔ {_title}", expanded=False):
+                st.markdown(f"""**الأمر بالإنجليزية:**\n```text\n{saved_item.get('prompt', '')}\n
 ```""")
-                st.markdown(f"**الوصف:** {saved_item['title']}")
+                st.markdown(f"**الوصف:** {_title}")
+                if st.button("✖ حذف", key=f"del_saved_{saved_item.get('id')}", use_container_width=True):
+                    if delete_saved_prompt(saved_item.get("id")):
+                        st.toast("تم حذف الأمر.", icon="🗑️")
+                        st.rerun()
+                    else:
+                        st.error("تعذّر الحذف من قاعدة البيانات.")
 
 if not api_key:
     st.warning("⚠️ يرجى إدخال مفتاح API في الشريط الجانبي للبدء.")
@@ -299,12 +401,14 @@ if st.session_state.last_response:
 
     with col_save:
         if st.button("✦ حفظ الأمر الأخير في المكتبة", key="save_current_prompt", use_container_width=True):
-            st.session_state.saved_prompts.append({
-                "title": st.session_state.last_prompt[:40] + "..." if len(st.session_state.last_prompt) > 40 else st.session_state.last_prompt,
-                "prompt": st.session_state.last_response
-            })
-            st.session_state.last_response = None
-            st.rerun()
+            _lp = st.session_state.last_prompt
+            _title = (_lp[:40] + "...") if len(_lp) > 40 else _lp
+            if insert_saved_prompt(_title, st.session_state.last_response):
+                st.session_state.last_response = None
+                st.session_state.email_feedback = ("success", "تم حفظ الأمر في المكتبة.")
+                st.rerun()
+            else:
+                st.error("تعذّر الحفظ في قاعدة البيانات. تحقّق من إعدادات Supabase.")
 
     with col_email:
         if st.button("✉ إرسال عبر الإيميل", key="open_email_dialog", use_container_width=True):
@@ -338,3 +442,19 @@ if user_prompt := st.chat_input("اكتب فكرتك هنا (مثال: أريد 
 
             except Exception as e:
                 st.error(f"حدث خطأ في الاتصال. التفاصيل: {e}")
+
+# ── الفوتر: عدّاد الزوار + اسم الجهة ──
+_visitors = read_visitor_count()
+st.markdown(
+    f"""
+    <div style="text-align:center; margin-top:36px; padding-top:16px; border-top:1px solid #e0e4ea; direction:rtl;">
+        <div style="font-size:0.95rem; color:#5F6368;">
+            عدد زوار الصفحة: <b style="color:#0F4C81;">{_visitors}</b>
+        </div>
+        <div style="font-size:0.85rem; color:#9aa0a6; margin-top:6px; letter-spacing:0.5px;">
+            Daal Tech 2026
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
