@@ -1,6 +1,3 @@
-git add requirements.txt
-git commit -m "add requirements"
-git push
 import streamlit as st
 import google.generativeai as genai
 import base64
