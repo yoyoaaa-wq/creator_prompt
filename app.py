@@ -65,14 +65,17 @@ st.markdown(
 #   - SUPABASE_KEY: استخدم المفتاح السرّي (service_role القديم أو sb_secret_) من جهة الخادم.
 #   - يعمل عبر REST بنفس نمط الترويسات (apikey + Authorization).
 # ==========================================
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
 SB_READY = bool(SUPABASE_URL and SUPABASE_KEY)
 SB_HEADERS = {
     "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
 }
+# المفاتيح القديمة (anon/service_role) من نوع JWT وتبدأ بـ eyJ وتُرسل عبر Authorization.
+# المفاتيح الجديدة (sb_secret_/sb_publishable_) تُرسل عبر apikey فقط لتفادي رفضها كـ "ليست JWT".
+if SUPABASE_KEY.startswith("eyJ"):
+    SB_HEADERS["Authorization"] = f"Bearer {SUPABASE_KEY}"
 
 # ---- عدّاد الزوار (جدول page_stats) ----
 def read_visitor_count() -> int:
@@ -121,9 +124,10 @@ def fetch_saved_prompts() -> list:
     except Exception:
         return []
 
-def insert_saved_prompt(title: str, prompt: str) -> bool:
+def insert_saved_prompt(title: str, prompt: str):
+    """يعيد (نجاح: bool، تفاصيل الخطأ: str)."""
     if not SB_READY:
-        return False
+        return False, "أسرار Supabase غير مضبوطة (SUPABASE_URL / SUPABASE_KEY)."
     try:
         r = requests.post(
             f"{SUPABASE_URL}/rest/v1/saved_prompts",
@@ -131,10 +135,26 @@ def insert_saved_prompt(title: str, prompt: str) -> bool:
             json={"title": title, "prompt": prompt},
             timeout=10,
         )
-        r.raise_for_status()
-        return True
-    except Exception:
-        return False
+        if r.status_code >= 400:
+            return False, f"HTTP {r.status_code}: {r.text[:200]}"
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+def sb_diagnostics() -> str:
+    """فحص سريع لاتصال قاعدة البيانات يُستخدم في لوحة الحالة."""
+    if not SB_READY:
+        return "غير مضبوط: تأكد من SUPABASE_URL و SUPABASE_KEY في أسرار Streamlit."
+    try:
+        r = requests.get(
+            f"{SUPABASE_URL}/rest/v1/page_stats",
+            headers=SB_HEADERS,
+            params={"select": "count", "id": "eq.visitors"},
+            timeout=10,
+        )
+        return f"HTTP {r.status_code} — {r.text[:200]}"
+    except Exception as e:
+        return f"خطأ اتصال: {e}"
 
 def delete_saved_prompt(prompt_id) -> bool:
     if not SB_READY:
@@ -342,6 +362,27 @@ with st.sidebar:
                     else:
                         st.error("تعذّر الحذف من قاعدة البيانات.")
 
+    # ── لوحة حالة الاتصال (للتشخيص) ──
+    with st.expander("⚙ حالة اتصال قاعدة البيانات"):
+        st.code(sb_diagnostics())
+
+    # ── فوتر الشريط الجانبي: عدّاد الزوار + اسم الجهة ──
+    st.markdown("---")
+    _visitors = read_visitor_count()
+    st.markdown(
+        f"""
+        <div style="text-align:center; padding-top:6px; direction:rtl;">
+            <div style="font-size:0.92rem; color:#5F6368;">
+                عدد زوار الصفحة: <b style="color:#0F4C81;">{_visitors}</b>
+            </div>
+            <div style="font-size:0.82rem; color:#9aa0a6; margin-top:6px; letter-spacing:0.5px;">
+                Daal Tech 2026
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 if not api_key:
     st.warning("⚠️ يرجى إدخال مفتاح API في الشريط الجانبي للبدء.")
     st.stop()
@@ -403,12 +444,13 @@ if st.session_state.last_response:
         if st.button("✦ حفظ الأمر الأخير في المكتبة", key="save_current_prompt", use_container_width=True):
             _lp = st.session_state.last_prompt
             _title = (_lp[:40] + "...") if len(_lp) > 40 else _lp
-            if insert_saved_prompt(_title, st.session_state.last_response):
+            _ok, _detail = insert_saved_prompt(_title, st.session_state.last_response)
+            if _ok:
                 st.session_state.last_response = None
                 st.session_state.email_feedback = ("success", "تم حفظ الأمر في المكتبة.")
                 st.rerun()
             else:
-                st.error("تعذّر الحفظ في قاعدة البيانات. تحقّق من إعدادات Supabase.")
+                st.error(f"تعذّر الحفظ: {_detail}")
 
     with col_email:
         if st.button("✉ إرسال عبر الإيميل", key="open_email_dialog", use_container_width=True):
@@ -442,19 +484,3 @@ if user_prompt := st.chat_input("اكتب فكرتك هنا (مثال: أريد 
 
             except Exception as e:
                 st.error(f"حدث خطأ في الاتصال. التفاصيل: {e}")
-
-# ── الفوتر: عدّاد الزوار + اسم الجهة ──
-_visitors = read_visitor_count()
-st.markdown(
-    f"""
-    <div style="text-align:center; margin-top:36px; padding-top:16px; border-top:1px solid #e0e4ea; direction:rtl;">
-        <div style="font-size:0.95rem; color:#5F6368;">
-            عدد زوار الصفحة: <b style="color:#0F4C81;">{_visitors}</b>
-        </div>
-        <div style="font-size:0.85rem; color:#9aa0a6; margin-top:6px; letter-spacing:0.5px;">
-            Daal Tech 2026
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
