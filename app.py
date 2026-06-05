@@ -65,8 +65,11 @@ st.markdown(
 #   - SUPABASE_KEY: استخدم المفتاح السرّي (service_role القديم أو sb_secret_) من جهة الخادم.
 #   - يعمل عبر REST بنفس نمط الترويسات (apikey + Authorization).
 # ==========================================
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
+# تطبيع رابط Supabase: الاحتفاظ بالنطاق فقط (scheme + host) لتفادي أي مسار زائد مثل /rest/v1 (PGRST125)
+_raw_url = st.secrets.get("SUPABASE_URL", "").strip()
+_m = re.match(r"^(https?://[^/]+)", _raw_url)
+SUPABASE_URL = _m.group(1) if _m else _raw_url.rstrip("/")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "").strip()
 SB_READY = bool(SUPABASE_URL and SUPABASE_KEY)
 SB_HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -78,14 +81,14 @@ if SUPABASE_KEY.startswith("eyJ"):
     SB_HEADERS["Authorization"] = f"Bearer {SUPABASE_KEY}"
 
 # ---- عدّاد الزوار (جدول page_stats) ----
-def read_visitor_count() -> int:
+def read_stat(stat_id: str) -> int:
     if not SB_READY:
         return 0
     try:
         r = requests.get(
             f"{SUPABASE_URL}/rest/v1/page_stats",
             headers=SB_HEADERS,
-            params={"id": "eq.visitors", "select": "count"},
+            params={"id": f"eq.{stat_id}", "select": "count"},
             timeout=10,
         )
         r.raise_for_status()
@@ -94,19 +97,20 @@ def read_visitor_count() -> int:
     except Exception:
         return 0
 
-def bump_visitor_count() -> int:
+def bump_stat(stat_id: str) -> int:
     if not SB_READY:
         return 0
     try:
         r = requests.post(
-            f"{SUPABASE_URL}/rest/v1/rpc/increment_visitors",
+            f"{SUPABASE_URL}/rest/v1/rpc/increment_stat",
             headers=SB_HEADERS,
+            json={"stat_id": stat_id},
             timeout=10,
         )
         r.raise_for_status()
         return int(r.json())
     except Exception:
-        return read_visitor_count()
+        return read_stat(stat_id)
 
 # ---- الأوامر المحفوظة (جدول saved_prompts) ----
 def fetch_saved_prompts() -> list:
@@ -141,21 +145,6 @@ def insert_saved_prompt(title: str, prompt: str):
     except Exception as e:
         return False, str(e)
 
-def sb_diagnostics() -> str:
-    """فحص سريع لاتصال قاعدة البيانات يُستخدم في لوحة الحالة."""
-    if not SB_READY:
-        return "غير مضبوط: تأكد من SUPABASE_URL و SUPABASE_KEY في أسرار Streamlit."
-    try:
-        r = requests.get(
-            f"{SUPABASE_URL}/rest/v1/page_stats",
-            headers=SB_HEADERS,
-            params={"select": "count", "id": "eq.visitors"},
-            timeout=10,
-        )
-        return f"HTTP {r.status_code} — {r.text[:200]}"
-    except Exception as e:
-        return f"خطأ اتصال: {e}"
-
 def delete_saved_prompt(prompt_id) -> bool:
     if not SB_READY:
         return False
@@ -170,11 +159,6 @@ def delete_saved_prompt(prompt_id) -> bool:
         return True
     except Exception:
         return False
-
-# يُحتسب الزائر مرة واحدة لكل جلسة (لا يتأثر بإعادات التشغيل الداخلية)
-if "visit_counted" not in st.session_state:
-    st.session_state.visit_counted = True
-    bump_visitor_count()
 
 # 3. دوال مساعدة (شعار دال التقنية) - تم التعديل للاسم الدقيق للملف
 def get_base64_of_bin_file(bin_file):
@@ -362,18 +346,14 @@ with st.sidebar:
                     else:
                         st.error("تعذّر الحذف من قاعدة البيانات.")
 
-    # ── لوحة حالة الاتصال (للتشخيص) ──
-    with st.expander("⚙ حالة اتصال قاعدة البيانات"):
-        st.code(sb_diagnostics())
-
-    # ── فوتر الشريط الجانبي: عدّاد الزوار + اسم الجهة ──
+    # ── فوتر الشريط الجانبي: عدد الأوامر المنشأة + اسم الجهة ──
     st.markdown("---")
-    _visitors = read_visitor_count()
+    _created = read_stat("prompts_created")
     st.markdown(
         f"""
         <div style="text-align:center; padding-top:6px; direction:rtl;">
             <div style="font-size:0.92rem; color:#5F6368;">
-                عدد زوار الصفحة: <b style="color:#0F4C81;">{_visitors}</b>
+                عدد الأوامر المنشأة: <b style="color:#0F4C81;">{_created}</b>
             </div>
             <div style="font-size:0.82rem; color:#9aa0a6; margin-top:6px; letter-spacing:0.5px;">
                 Daal Tech 2026
@@ -480,6 +460,7 @@ if user_prompt := st.chat_input("اكتب فكرتك هنا (مثال: أريد 
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
                 
                 st.session_state.last_response = response.text
+                bump_stat("prompts_created")
                 st.rerun() 
 
             except Exception as e:
